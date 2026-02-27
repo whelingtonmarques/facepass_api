@@ -34,16 +34,13 @@ export class UserRepository {
 
     // Encontra um usuário pelo ID, usando cache quando disponível
     async findById(userId: string): Promise<IUser | null> {
-        console.time('findById');
 
         if (this.cache.has(userId)) {
-            console.timeEnd('findById');
             return this.cache.get(userId)!
         }
 
         const filePath = path.join(this.basePath, `${userId}.json`)
         if (!fs.existsSync(filePath)) {
-            console.timeEnd('findById');
             return null
         }
 
@@ -51,7 +48,6 @@ export class UserRepository {
         const user: IUser = JSON.parse(content)
         this.cache.set(userId, user)
 
-        console.timeEnd('findById');
         return user
     }
 

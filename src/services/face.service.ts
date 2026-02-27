@@ -22,20 +22,24 @@ let faceMatcher: faceapi.FaceMatcher | null = null
 
 export function invalidateMatcher() { faceMatcher = null }
 
+// Obtém o FaceMatcher do cache ou reconstrói se necessário
 async function getOrBuildMatcher(): Promise<faceapi.FaceMatcher> {
     if (faceMatcher) return faceMatcher
 
+    // Carrega todos os usuários e seus descritores para construir o FaceMatcher
     const users = await userRepository.findAll()
+    // Constrói o FaceMatcher com os descritores dos usuários
     const labeled = users.map(u =>
         new faceapi.LabeledFaceDescriptors(u.userId, [new Float32Array(u.descriptor)])
     )
+    // Cria o FaceMatcher com os descritores rotulados e o limite de distância
     faceMatcher = new faceapi.FaceMatcher(labeled, threshold)
+
     return faceMatcher
 }
 
 // Verifica se a imagem do rosto corresponde ao usuário ou a qualquer usuário registrado
 async function generateDescriptor(imagePath: string): Promise<Float32Array | null> {
-    console.time('generateDescriptor');
     // Carrega a imagem usando canvas
     const img = await canvas.loadImage(imagePath)
 
@@ -45,7 +49,6 @@ async function generateDescriptor(imagePath: string): Promise<Float32Array | nul
         .withFaceLandmarks()
         .withFaceDescriptor()
 
-    console.timeEnd('generateDescriptor');
     return detection?.descriptor ?? null
 }
 
@@ -58,15 +61,14 @@ export async function verifyHybrid(userId: string | undefined, imagePath: string
 
     // Verificação 1:1
     if (userId) {
+        // Busca o usuário pelo ID
         const user = await userRepository.findById(userId)
         if (!user) return { access: false, message: 'Usuário não encontrado.' }
 
-        // Calcula a distância entre o descritor de entrada e o descritor do usuário
-        const start = performance.now();
+        // Calcula a distância euclidiana entre o descritor de entrada e o descritor do usuário
         const distance = faceapi.euclideanDistance(inputDescriptor, new Float32Array(user.descriptor))
-        const end = performance.now();
-        console.log(`faceapi.euclideanDistance: ${end - start} ms`);
 
+        // Se a distância for menor que o limite, consideramos uma correspondência válida
         if (distance < threshold) {
             return { access: true, mode: '1:1', userName: user.name }
         } else {
@@ -76,9 +78,12 @@ export async function verifyHybrid(userId: string | undefined, imagePath: string
     }
 
     // Verificação 1:N usando FaceMatcher com cache
+    // Obtém o FaceMatcher do cache ou reconstrói se necessário
     const matcher = await getOrBuildMatcher()
+    // Encontra a melhor correspondência para o descritor de entrada
     const match = matcher.findBestMatch(inputDescriptor)
 
+    // Se a correspondência não for "unknown", significa que encontramos um usuário correspondente
     if (match.label !== 'unknown') {
         const user = await userRepository.findById(match.label)
         return { access: true, mode: '1:N', userName: user?.name }
@@ -110,6 +115,8 @@ export async function registerUser(userId: string, name: string, imagePath: stri
     }
 
     await userRepository.save(user)
+
+    // Invalida o cache do FaceMatcher para garantir que o novo usuário seja considerado nas próximas verificações
     invalidateMatcher()
 
     return { success: true, userId, message: 'Usuário cadastrado com sucesso.' }
