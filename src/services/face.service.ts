@@ -16,7 +16,7 @@ interface RegisterResult {
 }
 
 // Limite de distância para considerar uma correspondência
-const threshold = 0.6
+const threshold = 0.55
 
 let faceMatcher: faceapi.FaceMatcher | null = null
 
@@ -29,17 +29,15 @@ async function getOrBuildMatcher(): Promise<faceapi.FaceMatcher> {
     // Carrega todos os usuários e seus descritores para construir o FaceMatcher
     const users = await userRepository.findAll()
     // Constrói o FaceMatcher com os descritores dos usuários
-    const labeled = users.map(u =>
-        new faceapi.LabeledFaceDescriptors(u.userId, [new Float32Array(u.descriptor)])
-    )
+    const labeledDescriptors = users.map(user => new faceapi.LabeledFaceDescriptors(user.userId, user.descriptors.map(d => new Float32Array(d))))
     // Cria o FaceMatcher com os descritores rotulados e o limite de distância
-    faceMatcher = new faceapi.FaceMatcher(labeled, threshold)
+    faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, threshold)
 
     return faceMatcher
 }
 
 // Verifica se a imagem do rosto corresponde ao usuário ou a qualquer usuário registrado
-async function generateDescriptor(imagePath: string): Promise<Float32Array | null> {
+async function generateDescriptor(imagePath: string): Promise<number[] | null> {
     // Carrega a imagem usando canvas
     const img = await canvas.loadImage(imagePath)
 
@@ -49,7 +47,9 @@ async function generateDescriptor(imagePath: string): Promise<Float32Array | nul
         .withFaceLandmarks()
         .withFaceDescriptor()
 
-    return detection?.descriptor ?? null
+    if (!detection) return null
+
+    return Array.from(detection.descriptor)
 }
 
 // Verifica o rosto usando uma abordagem híbrida (1:1 e 1:N)
@@ -65,23 +65,28 @@ export async function verifyHybrid(userId: string | undefined, imagePath: string
         const user = await userRepository.findById(userId)
         if (!user) return { access: false, message: 'Usuário não encontrado.' }
 
-        // Calcula a distância euclidiana entre o descritor de entrada e o descritor do usuário
-        const distance = faceapi.euclideanDistance(inputDescriptor, new Float32Array(user.descriptor))
+        // Converte o descritor de entrada para Float32Array para comparação
+        const input = new Float32Array(inputDescriptor)
 
-        // Se a distância for menor que o limite, consideramos uma correspondência válida
-        if (distance < threshold) {
-            return { access: true, mode: '1:1', userName: user.name }
-        } else {
-            // Se não houver correspondência 1:1, retorna erro imediatamente
-            return { access: false, message: 'Rosto não corresponde ao usuário informado.' }
+        // Calcula a distância euclidiana entre o descritor de entrada e o descritor do usuário
+        for (const descriptor of user.descriptors) {
+            const distance = faceapi.euclideanDistance(input, new Float32Array(descriptor))
+
+            // Se a distância for menor que o limite, consideramos uma correspondência válida
+            if (distance < threshold) {
+                return { access: true, mode: '1:1', userName: user.name }
+            }
         }
+
+        // Se não houver correspondência 1:1, retorna erro imediatamente
+        return { access: false, message: 'Rosto não corresponde ao usuário informado.' }
     }
 
     // Verificação 1:N usando FaceMatcher com cache
     // Obtém o FaceMatcher do cache ou reconstrói se necessário
     const matcher = await getOrBuildMatcher()
     // Encontra a melhor correspondência para o descritor de entrada
-    const match = matcher.findBestMatch(inputDescriptor)
+    const match = matcher.findBestMatch(new Float32Array(inputDescriptor))
 
     // Se a correspondência não for "unknown", significa que encontramos um usuário correspondente
     if (match.label !== 'unknown') {
@@ -93,7 +98,8 @@ export async function verifyHybrid(userId: string | undefined, imagePath: string
 }
 
 // Registra um novo usuário com sua imagem facial
-export async function registerUser(userId: string, name: string, imagePath: string): Promise<RegisterResult> {
+export async function registerUser(userId: string, name: string, imagePaths: string[]): Promise<RegisterResult> {
+
     // Verifica se o usuário já existe
     const existingUser = await userRepository.findById(userId)
     if (existingUser) {
@@ -101,8 +107,13 @@ export async function registerUser(userId: string, name: string, imagePath: stri
     }
 
     // Gera o descritor facial a partir da imagem
-    const descriptor = await generateDescriptor(imagePath)
-    if (!descriptor) {
+    const descriptors = []
+    for (const path of imagePaths) {
+        const descriptor = await generateDescriptor(path)
+        if (descriptor) descriptors.push(descriptor)
+    }
+
+    if (descriptors.length === 0) {
         return { success: false, message: 'Nenhum rosto detectado na imagem.' }
     }
 
@@ -110,8 +121,8 @@ export async function registerUser(userId: string, name: string, imagePath: stri
     const user: IUser = {
         userId,
         name,
-        imagePath,
-        descriptor: Array.from(descriptor)
+        imagePaths,
+        descriptors
     }
 
     await userRepository.save(user)

@@ -1,6 +1,6 @@
 export interface IUser {
-    userId: string;
-    name: string;
-    imagePath: string
-    descriptor: number[];
+    userId: string
+    name: string
+    imagePaths: string[]
+    descriptors: number[][]
 }

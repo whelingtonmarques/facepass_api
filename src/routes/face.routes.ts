@@ -6,7 +6,7 @@ const router = Router()
 const upload = multer({ dest: 'uploads/' })
 
 // Rota para cadastro de usuário com imagem facial
-router.post('/register', upload.single('photo'), register)
+router.post('/register', upload.fields([{ name: 'photo', maxCount: 20 }, { name: 'photo[]', maxCount: 20 }]), register)
 
 // Rota para validação facial (com ou sem userId)
 router.post('/verify', upload.single('photo'), verify)

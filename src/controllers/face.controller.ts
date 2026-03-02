@@ -15,9 +15,13 @@ function logRequestInfo(req: Request, extra?: Record<string, any>) {
 // Rota para cadastro de usuário com imagem facial
 export async function register(req: Request, res: Response) {
     const { userId, name } = req.body;
-    const imagePath = req.file?.path;
+    const filesInput = req.files as Express.Multer.File[] | { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const files = Array.isArray(filesInput)
+        ? filesInput
+        : [...(filesInput?.photo ?? []), ...(filesInput?.['photo[]'] ?? [])];
+    const imagePaths = files.map(file => file.path);
 
-    logRequestInfo(req, { imagePath });
+    logRequestInfo(req, { imagePaths, imagesCount: imagePaths.length });
 
     try {
         if (!userId || !name) {
@@ -25,12 +29,12 @@ export async function register(req: Request, res: Response) {
             return res.status(400).json({ error: 'userId e name são obrigatórios' });
         }
 
-        if (!imagePath) {
-            console.warn('Cadastro: imagem facial ausente');
-            return res.status(400).json({ error: 'Imagem facial obrigatória' });
+        if (imagePaths.length === 0) {
+            console.warn('Cadastro: imagens faciais ausentes');
+            return res.status(400).json({ error: 'Ao menos uma imagem facial é obrigatória' });
         }
 
-        const result = await registerUser(userId, name, imagePath);
+        const result = await registerUser(userId, name, imagePaths);
         console.log('Resultado do cadastro:', result);
 
         if (!result.success) {
@@ -43,9 +47,11 @@ export async function register(req: Request, res: Response) {
         console.error('Erro no cadastro:', error);
         return res.status(500).json({ error: 'Erro interno' });
     } finally {
-        if (imagePath && fs.existsSync(imagePath)) {
-            fs.unlinkSync(imagePath);
-            console.log('Imagem temporária removida:', imagePath);
+        for (const imagePath of imagePaths) {
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+                console.log('Imagem temporária removida:', imagePath);
+            }
         }
     }
 }
